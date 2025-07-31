@@ -1,0 +1,546 @@
+## CRISPR long read alignement V5
+## july 2024
+## CORRE GUILLAUME @ GENETHON
+
+
+# align read on the genome 
+# realign reads on target to amplicon + plasmide
+
+
+## snakemake -s ../pipeline/ONT.crisprV5.snakemake  -k -j 48 --use-conda --conda-prefix ~/conda-envs --conda-frontend mamba  --rerun-triggers mtime -n
+
+import os;
+import re;
+from glob import glob;
+
+libraries = glob("*.fastq.gz")
+libraries = [re.sub(".fastq.gz", '', w) for w in libraries];
+
+configfile: "./ont.configV5.yaml"
+
+############################ START #######################################################
+
+rule all:
+    input: 
+     expand("../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.annotated.bed", library = libraries),
+     expand("../analysis/{library}/locusDEL/{library}.end2end.withDEL.locusDelAligned.bam", library = libraries),
+     expand("../analysis/{library}/{library}.QC.log", library = libraries),
+     expand("../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.bam.cov", library = libraries),
+     expand("../analysis/{library}/{library}_summary.txt", library = libraries),
+     expand("../analysis/{library}/locusDEL/{library}.end2end.withDEL.locusDelAligned.sniffles.vcf", library = libraries),
+     expand("../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.withoutDEL.sniffles.vcf", library = libraries),
+     expand("../analysis/{library}/locusDEL/{library}.end2end.withDEL.locusDelAligned.cuteSV.vcf", library = libraries),
+     expand("../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.withoutDEL.cuteSV.vcf", library = libraries),
+     expand("../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.withoutDEL.bed", library = libraries),
+     expand("../analysis/{library}/locus/{library}.end2end.locusAligned.composition.txt", library = libraries),
+     expand("../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.sniffles.vcf", library = libraries),
+     "../misc/annotation.bed"
+
+
+## FILTER and TRIM READS
+rule trimQuality:
+    input: "{library}.fastq.gz"
+    output:"../analysis/{library}/{library}.QCfiltered.fastq.gz"
+    threads: 6
+    conda: "tools"
+    log : "../analysis/{library}/{library}.QCfiltered.log"
+    params: minSize=config["min_read_size"], quality=config["min_quality_5'_3'"]
+    shell: """
+            cutadapt -j {threads} -q {params.quality} -m {params.minSize} {input} -o {output} > {log}
+            """
+
+rule trimAdaptor:
+    input: rules.trimQuality.output
+    output: "../analysis/{library}/{library}.trimmed.fastq.gz"
+    threads: 6
+    log: "../analysis/{library}/{library}.trimmed.log"
+    conda: "tools"
+    shell: """
+        porechop -i {input} -o {output} --extra_end_trim 0  --extra_middle_trim_good_side 0 --extra_middle_trim_bad_side 0  --min_trim_size 10 -t {threads}  > {log}
+        """
+
+
+
+
+
+## Index genome, Align reads , sort reads and index bam
+rule index_genome_mm2:
+    input: config["reference_genome"]
+    output: config["mm2_index"]
+    conda: "tools"
+    threads: 12
+    shell: """
+            minimap2 -t {threads} -d {output} -x map-ont  {input}
+        """
+
+rule align_genome_mm2:
+    input: fq=rules.trimAdaptor.output, idx=rules.index_genome_mm2.output
+    output: temp("../analysis/{library}/genome/{library}.trimmed.GenomeAligned.sam")
+    threads: 6
+    conda: "tools"
+    message: "Align reads on the reference genome"
+    shell: """
+        minimap2 -t {threads}  -x map-ont  -a -Y  --secondary=no  -o {output} {input.idx}  {input.fq};
+        """ 
+
+rule sort_genome_aligned: 
+    input: al=rules.align_genome_mm2.output, genome=config["reference_genome"]
+    output: bam="../analysis/{library}/genome/{library}.trimmed.GenomeAligned.sorted.bam"
+    threads: 6
+    conda: "tools"
+    message: "Remove unmapped reads and sort bam"
+    shell: """
+        samtools view -h -F 4  {input.al} | samtools sort - | samtools calmd -b - {input.genome} > {output.bam}  ;
+        samtools index {output.bam}
+        """
+
+
+
+## filter reads that are on-target, even partialy and save as fastq
+rule get_OT_reads:
+    input: rules.sort_genome_aligned.output.bam
+    output: ot_RNAMES=temp("../analysis/{library}/genome/{library}.trimmed.GenomeAligned.sorted.OT.txt"),
+     tmp=temp("../analysis/{library}/genome/{library}.tmp.txt"),
+     ot="../analysis/{library}/genome/{library}.trimmed.GenomeAligned.sorted.OT.fastq.gz"
+    conda: "tools"
+    threads: 1
+    message: "Keep reads that overlap the enrichment region between the enrichment guides"
+    params: chrom=config["gRNA"]["chromosome"], 
+     left=config["gRNA"]["enrichment"]["left"]["cut_position"], 
+     right=config["gRNA"]["enrichment"]["right"]["cut_position"]
+    shell: """   
+        samtools view  {input} {params.chrom}:{params.left}-{params.right} | cut -f1 | sort | uniq > {output.tmp};
+        sort {output.tmp} | uniq -c | awk '$1>0 {{print $2}}'  > {output.ot_RNAMES};
+        samtools view -hb {input} -N {output.ot_RNAMES} | samtools fastq - | gzip > {output.ot}
+        """
+
+
+################################################################################
+
+
+
+## Use genbank file to extract fasta sequence and bed annotations
+rule make_reference:
+    input: 
+    output: fa=os.path.splitext(config["reference_plasmid"])[0]+".fa", bed=os.path.splitext(config["reference_plasmid"])[0]+".bed"
+    conda: "tools"
+    params: scripts=config["scripts_folder"], plasmid=config["reference_plasmid"]
+    shell: """
+        if [[ -f "{params.plasmid}" ]]
+        then
+            plasmid_name=$(basename {params.plasmid})
+            sed -i "s/Exported.*/$plasmid_name/" {params.plasmid}
+
+            python {params.scripts}/genbank_to_bed.py {params.plasmid} {output.bed}
+            python {params.scripts}/genbank_to_fa.py {params.plasmid} {output.fa}
+        else
+            echo ">empty" > {output.fa}
+            echo "" > {output.bed}
+        fi
+        """
+
+
+
+
+#### Align reads on the ROI
+
+rule make_ROI_reference:
+    input: genome=config["reference_genome"], plasmid=rules.make_reference.output.fa
+    output: full_length="../misc/"+config["gRNA"]["locus"]+"_locus.fa", 
+     deleted="../misc/"+config["gRNA"]["locus"]+"_locusDeleted.fa"
+    threads: 1
+    conda: "tools"
+    params: ref_name=config["gRNA"]["locus"],
+     chr=config["gRNA"]["chromosome"],
+     left=config["gRNA"]["enrichment"]["left"]["cut_position"], 
+     right=config["gRNA"]["enrichment"]["right"]["cut_position"],
+     first_cut=config["gRNA"]["editing"]["left"]["cut_position"], 
+     second_cut=config["gRNA"]["editing"]["right"]["cut_position"],
+     plasmid=config["reference_plasmid"]
+    shell: """
+
+        ## FULL LENGTH ENRICHMENT REGION
+        echo '>'{params.ref_name} > {output.full_length}
+        samtools faidx  {input.genome} {params.chr}:{params.left}-{params.right} | awk 'NR>1' >> {output.full_length} ## add enrichment region sequence
+
+        if [[ -f "{params.plasmid}" ]]
+        then
+            cat {input.plasmid} >> {output.full_length} ##add plasmid sequence
+        fi
+
+        ## ENRICHMENT REGION WITH DELETION BETWEEN EDITING GUIDES
+        echo '>'{params.ref_name}'_deleted' > {output.deleted}
+        samtools faidx  {input.genome} {params.chr}:{params.left}-{params.first_cut} | awk 'NR>1' > temp.fa
+        samtools faidx  {input.genome} {params.chr}:{params.second_cut}-{params.right} | awk 'NR>1' >> temp.fa
+        tr -d '\n' < temp.fa > tempout.fa
+        cat tempout.fa >> {output.deleted}
+        rm tempout.fa temp.fa
+        echo -e '\n' >>{output.deleted}
+        if [[ -f "{params.plasmid}" ]]
+        then
+            cat {input.plasmid} >> {output.deleted}
+        fi
+        """
+
+rule index_ROI:
+    input: full_length=rules.make_ROI_reference.output.full_length, 
+     deleted= rules.make_ROI_reference.output.deleted
+    output: full_length="../misc/"+config["gRNA"]["locus"]+"_locus.mm2", 
+     deleted="../misc/"+config["gRNA"]["locus"]+"_locusDeleted.mm2"
+    threads: 6
+    conda: "tools"
+    message: "index enrichment region with adapted mm2 parameters to force split alignment at deletion"
+    params: 
+     size=config["mm2_size"],
+     r=config["mm2_r"], 
+     k=config["mm2_K"], 
+     w=config["mm2_W"] 
+    shell: """
+        minimap2 -t {threads} -d {output.full_length} -x map-ont -I {params.size} -r {params.r} -k {params.k} -w {params.w} {input.full_length}
+        minimap2 -t {threads} -d {output.deleted} -x map-ont -I {params.size} -r {params.r} -k {params.k} -w {params.w} {input.deleted}
+        """
+
+rule align_locus_mm2:
+    input: fq=rules.get_OT_reads.output.ot, idx=rules.index_ROI.output.full_length
+    output: temp("../analysis/{library}/locus/{library}.locusAligned.sam")
+    threads: 6
+    conda: "tools"
+    message: "Align reads on the enrichment region"
+    params: r=config["mm2_r"], 
+     k=config["mm2_K"],
+     w=config["mm2_W"],
+     size=config["mm2_size"]
+    shell: """
+        minimap2 -t {threads}   -x map-ont  -n 20 -I {params.size} -r {params.r} -k {params.k} -w {params.w} --split-prefix ../analysis/{wildcards.library}/split -a -Y  --secondary=no  -o {output} {input.idx}  {input.fq};
+        """ 
+
+
+rule sort_amplicon: 
+    input: al=rules.align_locus_mm2.output, genome=rules.make_ROI_reference.output.full_length
+    output: bam="../analysis/{library}/locus/{library}.locusAligned.sorted.bam", 
+        tmp=temp("../analysis/{library}/locus/{library}.tmp.txt"),
+        tmp2=temp("../analysis/{library}/locus/{library}.tmp2.txt"),
+        end2end="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.bam"
+    threads: 6
+    conda: "tools"
+    message: "Keep reads that overlap the 2 editing sites"
+    params: locus=config["gRNA"]["locus"],
+     first_cut=config["gRNA"]["editing"]["left"]["cut_position"], 
+     second_cut=config["gRNA"]["editing"]["right"]["cut_position"],
+     left=config["gRNA"]["enrichment"]["left"]["cut_position"], 
+     right=config["gRNA"]["enrichment"]["right"]["cut_position"],
+     offset=config["offset"],
+     offset_del=config["offset_deletion"]
+    shell: """
+        
+        ## CALCULATE COORDINATES RELATIVE TO ENRICHMENT GUIDES CUTTING SITES
+
+        enrichment_relative_end=$(expr {params.right} - {params.left})
+        first_cut_relative_pos=$(expr {params.first_cut} - {params.left} - {params.offset})
+        second_cut_relative_pos=$(expr {params.second_cut} - {params.left} + {params.offset})
+
+        align_left_of_first_cut=$(echo {params.locus}:1-$first_cut_relative_pos)
+        align_right_of_second_cut=$(echo {params.locus}:$second_cut_relative_pos-$enrichment_relative_end)
+
+        samtools view -h -F 4 -q 5 {input.al} | samtools sort - | samtools calmd -b - {input.genome} > {output.bam}  ;
+        samtools index {output.bam}
+
+        samtools view  {output.bam} $align_left_of_first_cut | cut -f1 | sort | uniq > {output.tmp};
+        samtools view  {output.bam} $align_right_of_second_cut | cut -f1 | sort | uniq >> {output.tmp};
+        sort {output.tmp} | uniq -c | awk '$1>1 {{print $2}}'  > {output.tmp2};
+        samtools view -hb {output.bam} -N {output.tmp2} > {output.end2end}
+        samtools index {output.end2end}
+        """
+
+
+
+rule make_annotation_locus:
+    input:
+    output: annotation="../misc/annotation.bed"
+    threads: 1
+    conda: 'tools'
+    params: locus=config["gRNA"]["locus"],
+     first_cut=config["gRNA"]["editing"]["left"]["cut_position"], 
+     second_cut=config["gRNA"]["editing"]["right"]["cut_position"],
+     left=config["gRNA"]["enrichment"]["left"]["cut_position"], 
+     right=config["gRNA"]["enrichment"]["right"]["cut_position"],
+     offset=config["offset"]
+    shell: """
+
+        enrichment_relative_end=$(expr {params.right} - {params.left})
+        first_cut_relative_pos=$(expr {params.first_cut} - {params.left} - {params.offset})
+        second_cut_relative_pos=$(expr {params.second_cut} - {params.left} + {params.offset})
+        deletion_relative_start=$(expr {params.first_cut} - {params.left} + {params.offset})
+        deletion_relative_end=$(expr {params.second_cut} - {params.left} - {params.offset})
+        first_cut_relative_pos_del=$(expr {params.first_cut} - {params.left} + {params.offset})
+
+        echo -e {params.locus}"\t1\t$first_cut_relative_pos\tleft_part\t0\t+" > {output.annotation}
+        echo -e {params.locus}"\t$deletion_relative_start\t$deletion_relative_end\tdeletion_part\t0\t+" >> {output.annotation}
+        echo -e {params.locus}"\t$second_cut_relative_pos\t$enrichment_relative_end\tright_part\t0\t+" >> {output.annotation}
+
+        end_relative_pos_del=$(( $enrichment_relative_end - ({params.second_cut} - {params.left}) + ({params.second_cut} - {params.left}) ))
+
+        echo -e {params.locus}"_deleted\t1\t$first_cut_relative_pos\tleft_part\t0\t+" >> {output.annotation}
+        echo -e {params.locus}"_deleted\t$first_cut_relative_pos_del\t$end_relative_pos_del\tright_part\t0\t+" >> {output.annotation}
+    """
+
+## get reads with a deletion
+## detect read with deletion in locus, split bam file accordingly.
+
+rule make_deletion_detection_file:
+    input:
+    output: "../misc/locus_deletion_region.bed"
+    threads: 1
+    params:first_cut=config["gRNA"]["editing"]["left"]["cut_position"], 
+     second_cut=config["gRNA"]["editing"]["right"]["cut_position"] ,
+     locus=config["gRNA"]["locus"],
+     left=config["gRNA"]["enrichment"]["left"]["cut_position"], 
+     right=config["gRNA"]["enrichment"]["right"]["cut_position"],
+     offset=config["offset_deletion"],
+     name_left=config["gRNA"]["editing"]["left"]["name"],
+     name_right=config["gRNA"]["editing"]["right"]["name"]
+    shell: """
+        ## CALCULATE RELATIVE COORDINATES ON THE ENRICHMENT REGION
+
+        left_cut_relative=$(expr {params.first_cut} - {params.left})
+        right_cut_relative=$(expr {params.second_cut} - {params.left})
+        left_bound_deletion=$(expr $left_cut_relative + {params.offset})
+        right_bound_deletion=$(expr $right_cut_relative - {params.offset})
+
+        echo -e {params.locus}"\t$left_bound_deletion\t$right_bound_deletion\tdeletion_detection_range" > {output}
+        echo -e {params.locus}"\t$left_cut_relative\t$left_cut_relative\t"{params.name_left} >> {output}
+        echo -e {params.locus}"\t$right_cut_relative\t$right_cut_relative\t"{params.name_right} >> {output}
+
+    """
+
+
+rule get_reads_with_deletion:
+    input: bam=rules.sort_amplicon.output.end2end, bed=rules.make_deletion_detection_file.output
+    output: del_RNAMES="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.ReadsWithoutDel.txt", 
+     Del="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.withDEL.bam",
+     noDel="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.withoutDEL.bam",
+     fq= "../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.withDEL.fastq.gz"
+    conda: "tools"
+    threads: 1
+    message: "Split BAM file according to the presence of the deleted region between 2 guides cutting sites"
+    shell: """
+
+        bedtools intersect -F 0.9 -wao -a {input.bam} -b {input.bed} -bed  | awk '$0~"deletion_detection_range"' | cut -f4 | sort | uniq > {output.del_RNAMES}
+        samtools view -hb -N {output.del_RNAMES} -o {output.noDel} -U {output.Del} {input.bam}
+        samtools index {output.noDel}
+        samtools index {output.Del}
+        samtools fastq  {output.Del} | gzip - > {output.fq}
+        """
+
+
+#################################################################
+#################################################################
+#################################################################
+## realign reads with deletion to deleted locus version
+
+rule align_locusDeleted_mm2:
+    input: fq=rules.get_reads_with_deletion.output.fq,idx=rules.index_ROI.output.deleted
+    output: temp("../analysis/{library}/locusDEL/{library}.end2end.withDEL.locusDelAligned.sam")
+    threads: 6
+    conda : "tools"
+    params: r=config["mm2_r"],
+     k=config["mm2_K"], 
+     w=config["mm2_W"],
+     size=config["mm2_size"]
+    shell: """
+        minimap2 -t {threads} -x map-ont -n 20 -I {params.size} -r {params.r} -k {params.k} -w {params.w} --split-prefix ../analysis/{wildcards.library}/deleted -a -Y  --secondary=no   -o {output} {input.idx}  {input.fq};
+        """
+
+
+
+## Sort aligned reads
+rule sort_locusDeleted: 
+    input : sam=rules.align_locusDeleted_mm2.output, genome = rules.make_ROI_reference.output.deleted
+    output : bam="../analysis/{library}/locusDEL/{library}.end2end.withDEL.locusDelAligned.bam"
+    threads : 6
+    conda: "tools"
+    shell : """
+        samtools view -h -F 4 {input.sam} | samtools sort - | samtools calmd -b - {input.genome} > {output.bam}
+        samtools index {output.bam}
+        """
+
+
+
+## Bam to Bed
+
+rule bamTobed:
+    input : Del=rules.get_reads_with_deletion.output.Del, 
+     noDel=rules.get_reads_with_deletion.output.noDel,
+     locusDel=rules.sort_locusDeleted.output.bam, 
+     locus=rules.sort_amplicon.output.end2end
+    output : Del="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.withDEL.bed",  ## reads with deletion between guides on locus
+     noDel="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.withoutDEL.bed",  ## reads without deletion between guides on locus
+     locusDel="../analysis/{library}/locusDEL/{library}.end2end.withDEL.locusDelAligned.bed",  ## reads with deletion between guides, realigned on deleted locus
+     locus = "../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.bed"   ## all reads on locus
+    conda: "tools"
+    threads : 1
+    shell: """
+        bedtools bamtobed -i {input.Del} -cigar > {output.Del}
+        bedtools bamtobed -i {input.noDel} -cigar > {output.noDel}
+        bedtools bamtobed -i {input.locus} -cigar > {output.locus}
+        bedtools bamtobed -i {input.locusDel} -cigar > {output.locusDel}
+        """
+
+
+## annotate reads fragments to plasmid or genome or amplicon features
+rule annotate_read:
+    input: locus=rules.bamTobed.output.locus, locusdel=rules.bamTobed.output.locusDel, annotation=rules.make_annotation_locus.output.annotation, plasmid=rules.make_reference.output.bed
+    output: locus="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.annotated.bed", 
+     locusdel="../analysis/{library}/locusDEL/{library}.end2end.withDEL.locusDelAligned.annotated.bed"
+    threads: 1
+    conda:"tools"
+    params: 
+     plasmid=config["reference_plasmid"]
+    shell: """
+        if [[ -f "{params.plasmid}" ]]
+        then
+            bedtools intersect -nonamecheck  -wao -a {input.locus}  -b {input.annotation} {input.plasmid} -names locus vector > {output.locus}
+            bedtools intersect -nonamecheck  -wao -a {input.locusdel}  -b {input.annotation} {input.plasmid} -names locus vector > {output.locusdel}
+        else
+            bedtools intersect -nonamecheck  -wao -a {input.locus}  -b {input.annotation} -names locus > {output.locus}
+            bedtools intersect -nonamecheck  -wao -a {input.locusdel}  -b {input.annotation} -names locus > {output.locusdel}
+        fi
+        """
+
+        
+rule library_qc:
+    input: "{library}.fastq.gz", 
+     rules.trimAdaptor.output,
+     rules.trimQuality.output,
+     rules.get_OT_reads.output.ot, 
+     rules.get_reads_with_deletion.output.fq
+    output:"../analysis/{library}/{library}.QC.log"
+    threads: 2
+    conda: "tools"
+    shell: """
+            seqkit stats {input}  -abT -j {threads} -o {output}
+            """
+
+rule coverage:
+    input: rules.sort_amplicon.output.end2end
+    output: "../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.bam.cov"
+    conda: "tools"
+    shell: """
+         samtools depth  -d 0 -Q 1  {input} > {output}
+        """
+
+rule SV_calling_sniffles:
+    input: e2e=rules.sort_amplicon.output.end2end, 
+     e2eDELlocus=rules.sort_locusDeleted.output.bam, 
+     e2e_read_noDEL=rules.get_reads_with_deletion.output.noDel
+    output: e2eDELlocus="../analysis/{library}/locusDEL/{library}.end2end.withDEL.locusDelAligned.sniffles.vcf",
+     e2e="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.sniffles.vcf",
+     e2e_read_noDEL="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.withoutDEL.sniffles.vcf"
+    threads : 6
+    conda: 'tools'
+    threads: 6
+    params: minReadsPerSV=1,
+     MaxDistGroupSV=1,
+     MinSvLength=4,
+     MinReadFragLength=2000
+    shell: """
+
+        if [[ $(samtools view -c {input.e2e}) == 0 ]]; 
+        then 
+            touch {output.e2e} 
+        else
+            sniffles -t {threads} --tmp_file ../analysis/{wildcards.library}/locus/{wildcards.library} -n -1 -r {params.MinReadFragLength} -s {params.minReadsPerSV} -d {params.MaxDistGroupSV} -l {params.MinSvLength} -m {input.e2e} -v {output.e2e} || true
+        fi
+
+        if [[ $(samtools view -c {input.e2eDELlocus}) == 0 ]]; 
+        then 
+            touch {output.e2eDELlocus} 
+        else
+            sniffles -t {threads} --tmp_file ../analysis/{wildcards.library}/locusDEL/{wildcards.library} -n -1 -r {params.MinReadFragLength} -s {params.minReadsPerSV} -d {params.MaxDistGroupSV} -l {params.MinSvLength} -m {input.e2eDELlocus} -v {output.e2eDELlocus} || true
+        fi
+        
+        if [[ $(samtools view -c {input.e2e_read_noDEL}) == 0 ]]; 
+        then 
+            touch {output.e2e_read_noDEL} 
+        else
+            sniffles -t {threads} --tmp_file ../analysis/{wildcards.library}/locus/{wildcards.library} -n -1 -r {params.MinReadFragLength} -s {params.minReadsPerSV} -d {params.MaxDistGroupSV} -l {params.MinSvLength} -m {input.e2e_read_noDEL} -v {output.e2e_read_noDEL} || true
+        fi
+        
+        """
+
+
+rule SV_calling_cuteSV:
+    input: e2e=rules.sort_amplicon.output.end2end, 
+     e2eDELlocus=rules.sort_locusDeleted.output.bam, 
+     e2e_read_noDEL=rules.get_reads_with_deletion.output.noDel,
+     ref_full= rules.make_ROI_reference.output.full_length,
+     ref_del= rules.make_ROI_reference.output.deleted
+    output: e2eDELlocus="../analysis/{library}/locusDEL/{library}.end2end.withDEL.locusDelAligned.cuteSV.vcf",
+     e2e="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.cuteSV.vcf",
+     e2e_read_noDEL="../analysis/{library}/locus/{library}.locusAligned.sorted.end2end.withoutDEL.cuteSV.vcf"
+    threads : 6
+    conda: 'tools'
+    threads: 6
+    shell: """
+
+        if [[ $(samtools view -c {input.e2e}) == 0 ]]; 
+        then 
+            touch {output.e2e} 
+        else
+            cuteSV --threads {threads} --report_readid -p -1 -md 0 -mi 0 -r 1000 -s 1 -l 4 --max_cluster_bias_INS 1 --max_cluster_bias_DEL 1 --max_cluster_bias_INV 1 --max_cluster_bias_TRA 1  {input.e2e} {input.ref_full}  {output.e2e} ../analysis/{wildcards.library}/locus/ || true
+        fi
+
+        if [[ $(samtools view -c {input.e2eDELlocus}) == 0 ]]; 
+        then 
+            touch {output.e2eDELlocus} 
+        else
+            cuteSV --threads {threads} --report_readid -p -1 -md 0 -mi 0 -r 1000 -s 1 -l 4 --max_cluster_bias_INS 1 --max_cluster_bias_DEL 1 --max_cluster_bias_INV 1 --max_cluster_bias_TRA 1  {input.e2eDELlocus} {input.ref_del}  {output.e2eDELlocus} ../analysis/{wildcards.library}/locusDEL/ || true
+        fi
+        
+        if [[ $(samtools view -c {input.e2e_read_noDEL}) == 0 ]]; 
+        then 
+            touch {output.e2e_read_noDEL} 
+        else
+            cuteSV --threads {threads} --report_readid -p -1 -md 0 -mi 0 -r 1000 -s 1 -l 4 --max_cluster_bias_INS 1 --max_cluster_bias_DEL 1 --max_cluster_bias_INV 1 --max_cluster_bias_TRA 1  {input.e2e_read_noDEL} {input.ref_full}  {output.e2e_read_noDEL} ../analysis/{wildcards.library}/locus/ || true
+        fi
+        """
+
+rule base_composition:
+    input: bam=rules.sort_amplicon.output.end2end, genome=rules.make_ROI_reference.output.full_length
+    output: "../analysis/{library}/locus/{library}.end2end.locusAligned.composition.txt"
+    threads: 1
+    conda: "tools"
+    params: locus=config["gRNA"]["locus"]
+    shell: """
+         pysamstats -t variation  -c {params.locus} --stepper=nofilter -D 10000000 -f {input.genome} {input.bam} > {output}
+        """
+
+
+## make a summary table 
+rule summary:
+    input : raw="{library}.fastq.gz",
+     QC= rules.trimQuality.output,
+     adaptors = rules.trimAdaptor.output,
+     genome_all = rules.sort_genome_aligned.output.bam,
+     genomeOT = rules.get_OT_reads.output.ot,
+     ROI=rules.sort_amplicon.output.bam,
+     ROIe2e=rules.sort_amplicon.output.end2end,
+     withdel=rules.get_reads_with_deletion.output.Del,
+     withoutdel=rules.get_reads_with_deletion.output.noDel
+    output : "../analysis/{library}/{library}_summary.txt"
+    conda : "tools"
+    threads : 1
+    shell : """
+        echo "# " {wildcards.library}> {output}
+        echo "# " $(date) >> {output}
+        echo "# " {config[gRNA][locus]}"_"{config[gRNA][editing][left][name]}"-"{config[gRNA][editing][left][name]}"_"{config[gRNA][enrichment][left][cut_position]}:{config[gRNA][enrichment][right][cut_position]} >> {output}
+        echo $(zcat {input.raw} | grep -c "^@") "raw reads" >> {output}
+        echo "  "$(zcat {input.QC} | grep -c "^@") "QC pass reads" >> {output}
+        echo "    "$(zcat {input.adaptors} | grep -c "^@") "trimmed reads" >> {output}
+        echo "      "$(samtools view -F 2048 -c {input.genome_all}) "Genome aligned reads" >> {output}
+        echo "        "$(samtools view -F 2048 -c {input.genomeOT}) "Genome OnTarget reads" >> {output}
+        echo "          "$(samtools view -F 2048 -c {input.ROI}) "ROI aligned reads" >> {output}
+        echo "            "$(samtools view -F 2048 -c {input.ROIe2e})  "ROI end to end aligned reads" >> {output}
+        echo "              "$(samtools view -F 2048 -c {input.withdel}) "reads w/ DEL" >> {output}
+        echo "              "$(samtools view -F 2048 -c {input.withoutdel}) "reads w/o DEL" >> {output}
+        """

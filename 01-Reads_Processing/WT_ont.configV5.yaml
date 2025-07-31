@@ -1,0 +1,89 @@
+## configuration file for the ONT pipeline - Alexandra
+## set the aligner program and reference sequences
+
+# min read size filtering
+min_read_size: 4000
+min_quality_5'_3': "5,5"
+
+mm2_index:
+  "/media/Data/gcorre/cas9/templates/human_hg38.mm2"
+
+reference_folder:
+  "/media/Data/gcorre/cas9/templates/"
+
+reference_genome:
+  "/media/References/Human/Genecode/GRch38/Sequences/GRCh38.primary_assembly.genome.fa"
+
+reference_plasmid:
+  #"139_GP42_AAV_HA15_BgAS3_longIVS.fa"
+  #"GP40_AAV_HA15_GFP_PGK_DNGFR_modif.fa"
+  #GP42_sequenced.fa
+  ""
+ 
+annotation_plasmid:
+  #"139_GP42_AAV_HA15_BgAS3longIVS.bed"
+  #"GP40_AAV_HA15_GFP_PGK_DNGFR_modif.annotation.bed"
+  #GP42_sequenced.bed
+  ""
+
+annotation_locus:
+  "/media/Data/gcorre/cas9/templates/BCL11A.locus.annotation.bed"
+annotation_locusdel:
+  "/media/Data/gcorre/cas9/templates/BCL11A.locusdel.annotation.bed"
+
+## minimap2 amplicon alignment configuration ; used to force read spliting at deletion
+mm2_W:
+ "15"
+mm2_r:
+ "400,1000"
+mm2_K:
+ "15"
+mm2_size:
+  "1K"
+
+offset: 200 #how many bp to expand around the editing guides cutting sites. This is to detect reads that overlap at least n bp upstream and downstream of guide left & right respectively.
+offset_deletion: 100 # how many bp to shrink the region between the 2 guides. This is necessary for HBA where there is mis-alignment due to high homology between HBA2 and HBA1. 
+
+
+
+
+
+################################################################################################
+#####################  LOCUS INFORMATION  ######################################################
+################################################################################################
+
+gRNA: 
+  locus: "BCL11A"
+  chromosome: chr2
+  editing:
+    left:
+      name: 'gRNA40'
+      cut_position: 60495268
+    right:
+      name: 'gRNA66'
+      cut_position: 60498491
+  enrichment:
+    left:
+      name: 'BLC11Aa+'
+      cut_position: 60490000
+    right:
+      name: 'BLC11Ab-'
+      cut_position: 60510000
+
+#gRNA: 
+#  locus: "BCL11A"
+#  chromosome: 2
+#  editing:
+#    left:
+#      name: 'gRNA20'
+#      cut_position: 60495256
+#    right:
+#      name: 'gRNA53'
+#      cut_position: 60498502
+#  enrichment:
+#    left:
+#      name: 'BLC11Aa+'
+#      cut_position: 60490000
+#    right:
+#      name: 'BLC11Ab-'
+#      cut_position: 60510000
