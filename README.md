@@ -1,3 +1,4 @@
+[![DOI](https://zenodo.org/badge/1029574030.svg)](https://doi.org/10.5281/zenodo.16736758)
 # PRJNA1192026_BCL11A
 Bioinformatics material for the analysis of ONT LongReads
 
