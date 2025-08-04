@@ -2,25 +2,65 @@
 #### Nov 11th, 2024
 #### Analysis of ATF4 and GATA1 locus on the same reads
 
+# We here work on files generated with samtools mpileup program. 
+# For each library, we have the nucleotide composition at 5 nucleotides around the editing site.
+# for each position and each read, we have the corresponding base, incuding INDELS
 
-## -> extract base composition from mpileup using aligned reads BAM files
+# libraries 'template****' are fake reads generated to validate the pipeline.
 
-## get mpileup results at each locus
-# for lib in *; do samtools mpileup $lib/locus/$lib.locusAligned.sorted.end2end.bam -r BCL11A:8490-8495 --output-QNAME  --no-output-ins --no-output-del --no-output-ins-mods --no-output-ends --min-BQ 0 -aa -o $lib"_ATF4.mpileup"; echo $lib;done
+  # template_BCL11A_WT is the WT sequence : NNNNNN site1 NNNN site2 NNNNNNN
+  # template_BCL11A_DEL contains a deletion between the 2 editing sites : NNNNNN site1/site2 NNNNNNN
+  # template_BCL11A_overDEL contains a deletion between the 2 editing sites and extra deletion  NNNNNN sit../..te2 NNNNNNN
+  # template_BCL11A_INV contains an inversion between the 2 editing sites
+  # template_BCL11A_microDEL contains small deletions at each loci :   NNNN sit.. NNNN ..te2 NNNN
 
 
-# for lib in *; do samtools mpileup $lib/locus/$lib.locusAligned.sorted.end2end.bam -r BCL11A:5264-5270 --output-QNAME  --no-output-ins --no-output-del --no-output-ins-mods --no-output-ends --min-BQ 0 -aa -o $lib"_GATA1.mpileup"; echo $lib;done
 
 
+# ================================================================
+# Mpileup file generation for the 2 loci from the bam file
+# ================================================================
 
-R.Version()$version.string == "R version 4.4.1 (2024-06-14 ucrt)"
+# for lib in *; do 
+#   samtools mpileup $lib/locus/$lib.locusAligned.sorted.end2end.bam \
+#   -r BCL11A:8490-8495 \
+#   --output-QNAME  \
+#   --no-output-ins \
+#   --no-output-del \
+#   --no-output-ins-mods \
+#   --no-output-ends \
+#   --min-BQ 0 \
+#   -aa \
+#   -o $lib"_ATF4.mpileup" \ 
+#   echo $lib;\
+# done
 
-library(tidyverse);library(ggpubr);library(patchwork);library(writexl)
+
+# for lib in *; do \
+#   samtools mpileup $lib/locus/$lib.locusAligned.sorted.end2end.bam \
+#   -r BCL11A:5264-5270 
+#   --output-QNAME  \
+#   --no-output-ins \
+#   --no-output-del \
+#   --no-output-ins-mods \
+#   --no-output-ends \
+#   --min-BQ 0 \
+#   -aa \
+#   -o $lib"_GATA1.mpileup"; \
+#   echo $lib;\
+# done
+
+
+library(tidyverse);
+library(ggpubr);
+library(patchwork);
+library(writexl)
+library(ggprism)
 
 
 ## Load mpileup files 
 
-files <- list.files(path = "basecalling_hac3.3//",pattern = "mpileup",full.names = T)
+files <- list.files(path = "basecalling_hac3.3/",pattern = "mpileup",full.names = T)
 
 #files <- grep(files2,pattern = "pooled", invert = T,value=T)
 #files <- c(files,grep(files2,pattern = "WT", value=T) )
@@ -29,17 +69,26 @@ files_list <- lapply(files, function(x) {
   read.delim(x, sep="", header = F)
   }
   )
-
 names(files_list) <- str_remove(basename(files),".mpileup")
-
 
 files_df <- bind_rows(files_list,.id = "library")
 
 
 
-
 ## extract and format data for ATF4 locus
-seq_ATF4 <- files_df %>% filter(str_detect(library,"ATF4")) %>%  
+
+## We end up with a dataframe with 3 columns, including the library name, read name and 5nt sequence
+# library                         V7                                   ATF4_seq
+# FAV39284_pass_dca5b723_41ce3bd7 34113f84-25fe-4033-b163-51cd4e96ce84 CATCC   
+# FAV39284_pass_dca5b723_41ce3bd7 5b46cacd-5272-4d46-ac3b-e9c4ffc93a42 CATCC   
+# FAV39284_pass_dca5b723_41ce3bd7 7783bf13-2ba0-454b-a3c8-9bc8979138b8 CATCC   
+# FAV39284_pass_dca5b723_41ce3bd7 998a6299-ff43-4759-81bd-b6bf9049492f *****   
+# FAV39284_pass_dca5b723_41ce3bd7 d6faf348-bd59-48c8-9505-aa3875818530 CATCC 
+# ...
+
+
+seq_ATF4 <- files_df %>% 
+  filter(str_detect(library,"ATF4")) %>%  
   mutate(V5 = str_replace_all(V5,pattern = "[-\\+0-9]+",replacement = "")) %>% 
   rowwise() %>% 
   mutate(V5 = paste(unlist(strsplit(V5, "", fixed = TRUE)),collapse = ",")) %>% 
@@ -52,7 +101,8 @@ seq_ATF4 <- files_df %>% filter(str_detect(library,"ATF4")) %>%
 
 
 ## extract and format data for GATA1 locus
-seq_GATA1 <- files_df %>% filter(str_detect(library,"GATA1")) %>%  
+seq_GATA1 <- files_df %>%
+  filter(str_detect(library,"GATA1")) %>%  
   mutate(V5 = str_replace_all(V5,pattern = "[-\\+0-9]+",replacement = "")) %>% 
   rowwise() %>% 
   mutate(V5 = paste(unlist(strsplit(V5, "", fixed = TRUE)),collapse = ",")) %>% 
@@ -64,7 +114,12 @@ seq_GATA1 <- files_df %>% filter(str_detect(library,"GATA1")) %>%
   mutate(library = str_remove(library,"_GATA1"))
 
 
-## Combine data for the 2 loci and classify modification
+## Combine data for the 2 loci
+
+## Check if sequence is different from WT.
+## Classify each locus as unmodified or modified
+## Classify pair of loci as unmodified, edited at 1 or 2 loci
+
 seq <- seq_GATA1 %>% left_join(seq_ATF4)%>% 
   drop_na() %>% 
   mutate(GATA1_type =case_when(GATA1_seq == "GTGAT" ~ "unmodified",
@@ -88,11 +143,6 @@ seq_stat <- seq %>%
 
 
 write.table(seq_stat, "basecalling_hac3.3/for_the_paper/GATA1_ATF4_pattern_5nt.tsv", sep="\t",quote = F, row.names = F)
-
-
-stat_wide <-seq_stat %>% 
-  pivot_wider(names_from = library,values_from = proportion, id_cols = c(GATA1_type,ATF4_type),values_fill = 0)
-
 
 
 # summarise : count edited/unedited reads per locus in 5bp window
@@ -289,3 +339,8 @@ p4 <- ggarrange(plotlist = ATF4_plot_type, ncol = 1,nrow=5,common.legend = T)
 
 x11()
 p3+p4
+
+
+
+
+###### END #######
