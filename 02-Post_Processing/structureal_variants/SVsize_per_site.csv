@@ -1,0 +1,43 @@
+library;position;SV_size;n;total_reads;proportion
+FAV39284_pass_dca5b723_41ce3bd7;GATA1;Unmodified;114;116;0.98
+FAV39284_pass_dca5b723_41ce3bd7;GATA1;small (<=50bp);2;116;0.02
+FAV39284_pass_dca5b723_41ce3bd7;ATF4;Unmodified;112;116;0.97
+FAV39284_pass_dca5b723_41ce3bd7;ATF4;intermediate(<=200bp);1;116;0.01
+FAV39284_pass_dca5b723_41ce3bd7;ATF4;small (<=50bp);3;116;0.03
+FAW60490_pass_f881f114_a47281ca;GATA1;Unmodified;105;111;0.95
+FAW60490_pass_f881f114_a47281ca;GATA1;small (<=50bp);3;111;0.03
+FAW60490_pass_f881f114_a47281ca;ATF4;Large (>200bp);1;111;0.01
+FAW60490_pass_f881f114_a47281ca;ATF4;Unmodified;98;111;0.88
+FAW60490_pass_f881f114_a47281ca;ATF4;small (<=50bp);9;111;0.08
+FAW60490_pass_f881f114_a47281ca;GATA1-ATF4;Large (>200bp);3;111;0.03
+FAW61367_pass_7060b958_94682466;GATA1;Large (>200bp);4;126;0.03
+FAW61367_pass_7060b958_94682466;GATA1;Unmodified;103;126;0.82
+FAW61367_pass_7060b958_94682466;GATA1;small (<=50bp);4;126;0.03
+FAW61367_pass_7060b958_94682466;ATF4;Large (>200bp);1;126;0.01
+FAW61367_pass_7060b958_94682466;ATF4;Unmodified;106;126;0.84
+FAW61367_pass_7060b958_94682466;ATF4;small (<=50bp);4;126;0.03
+FAW61367_pass_7060b958_94682466;GATA1-ATF4;Large (>200bp);15;126;0.12
+FAW64023_pass_6211bc3e_9a1fd90d;GATA1;Unmodified;21;29;0.72
+FAW64023_pass_6211bc3e_9a1fd90d;GATA1;intermediate(<=200bp);1;29;0.03
+FAW64023_pass_6211bc3e_9a1fd90d;GATA1;small (<=50bp);1;29;0.03
+FAW64023_pass_6211bc3e_9a1fd90d;ATF4;Unmodified;17;29;0.59
+FAW64023_pass_6211bc3e_9a1fd90d;ATF4;intermediate(<=200bp);1;29;0.03
+FAW64023_pass_6211bc3e_9a1fd90d;ATF4;small (<=50bp);5;29;0.17
+FAW64023_pass_6211bc3e_9a1fd90d;GATA1-ATF4;Large (>200bp);7;29;0.24
+template_BCL11A_DEL;GATA1-ATF4;Large (>200bp);2016;2016;1
+template_BCL11A_INV;GATA1;Large (>200bp);35;2016;0.02
+template_BCL11A_INV;GATA1;Unmodified;16;2016;0.01
+template_BCL11A_INV;GATA1;small (<=50bp);6;2016;0
+template_BCL11A_INV;ATF4;Large (>200bp);13;2016;0.01
+template_BCL11A_INV;ATF4;Unmodified;41;2016;0.02
+template_BCL11A_INV;ATF4;small (<=50bp);3;2016;0
+template_BCL11A_INV;GATA1-ATF4;Large (>200bp);2026;2016;1
+template_BCL11A_WT;GATA1;Unmodified;2016;2017;1
+template_BCL11A_WT;GATA1;small (<=50bp);1;2017;0
+template_BCL11A_WT;ATF4;Unmodified;2014;2017;1
+template_BCL11A_WT;ATF4;small (<=50bp);3;2017;0
+template_BCL11A_microDEL;GATA1;Unmodified;5;2018;0
+template_BCL11A_microDEL;GATA1;small (<=50bp);2016;2018;1
+template_BCL11A_microDEL;ATF4;Unmodified;10;2018;0
+template_BCL11A_microDEL;ATF4;small (<=50bp);2020;2018;1
+template_BCL11A_overDEL;GATA1-ATF4;Large (>200bp);2016;2016;1
