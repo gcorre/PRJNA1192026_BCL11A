@@ -50,11 +50,14 @@ mpileup was used to extract nucleotide composition at loci position (5nt window)
    echo $lib;\
  done
 ~~~
+Folders in 01-Reads_Processing contains VCF, BED, mpileup and composition intermediate files for the post-processing step below.
+
 
 # Post-Processing
 Folder 02-Post_Processing contains 2 R scripts : 
  - allele_from_pileup.R
-Perform analysis of the mpileup files to classify loci as modified or not and also perform a co-editing analysis for each single read 
+Perform analysis of the mpileup files to classify loci as modified or not and also perform a co-editing analysis for each single read
+
  - base_composition_logo.R
 Perform the SV analysis from bed and VCF files to quantify INDELs size and frequency. Also generate seqLogo figures.
 
